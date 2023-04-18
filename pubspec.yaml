@@ -35,8 +35,20 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - images/WhatsApp Image 2022-11-15 at 23.04.25.jpeg
 
-  # To add assets to your application, add an assets section, like this:
+  fonts:
+  - family: Aboreto
+    fonts:
+    - asset: FONTS/Aboreto-Regular.ttf
+
+  - family: Coda
+    fonts:
+    - asset: FONTS/Coda-Regular.ttf
+
+
+  #To add assets to your application, add an assets section, like s:
   # assets:
   #  - images/a_dot_burr.jpeg
   #  - images/a_dot_ham.jpeg
