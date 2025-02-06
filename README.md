@@ -29,3 +29,249 @@ Mi Card is a personal business card. Imagine every time you wanted to give someo
 
 
 ![End Banner](./mi_card.png)
+
+
+# Install required packages
+!pip install google-cloud-aiplatform PyPDF2 python-docx nltk beautifulsoup4 markdown google-generativeai
+
+import os
+import google.generativeai as genai
+from google.cloud import aiplatform
+import PyPDF2
+import json
+from datetime import datetime
+import io
+import nltk
+from nltk.tokenize import sent_tokenize
+from nltk.corpus import stopwords
+import logging
+from IPython.display import display
+import ipywidgets as widgets
+from google.colab import files
+
+# Download NLTK data
+nltk.download('punkt')
+nltk.download('stopwords')
+
+class DocumentProcessor:
+    def __init__(self):
+        self.supported_formats = {
+            '.pdf': self._process_pdf,
+            '.txt': self._process_text,
+            '.docx': self._process_docx
+        }
+
+    def process_document(self, file_path):
+        file_ext = os.path.splitext(file_path)[1].lower()
+        if file_ext not in self.supported_formats:
+            raise ValueError(f"Unsupported file format: {file_ext}")
+        
+        content = self.supported_formats[file_ext](file_path)
+        sections = self._split_into_sections(content)
+        return {
+            'content': content,
+            'sections': sections,
+            'keywords': self._extract_keywords(content)
+        }
+
+    def _process_pdf(self, file_path):
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+        return self._clean_text(text)
+
+    def _process_text(self, file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            return self._clean_text(file.read())
+
+    def _clean_text(self, text):
+        return ' '.join(text.split())
+
+    def _split_into_sections(self, text):
+        sentences = sent_tokenize(text)
+        sections = []
+        current_section = []
+        
+        for sentence in sentences:
+            current_section.append(sentence)
+            if len(' '.join(current_section)) >= 1000:
+                sections.append({
+                    'content': ' '.join(current_section)
+                })
+                current_section = []
+        
+        if current_section:
+            sections.append({
+                'content': ' '.join(current_section)
+            })
+        
+        return sections
+
+    def _extract_keywords(self, text):
+        words = text.lower().split()
+        stop_words = set(stopwords.words('english'))
+        return list(set([word for word in words if word not in stop_words and len(word) > 3]))
+
+class KnowledgeBaseSystem:
+    def __init__(self, project_id, location):
+        self.project_id = project_id
+        self.location = location
+        self.knowledge_base = {}
+        self.knowledge_base_path = 'knowledge_base.json'
+        self.doc_processor = DocumentProcessor()
+        
+        # Configure Gemini
+        GOOGLE_API_KEY = 'your-api-key'  # Replace with your API key
+        genai.configure(api_key=GOOGLE_API_KEY)
+        self.model = genai.GenerativeModel('gemini-pro')
+        
+        self.load_knowledge_base()
+
+    def load_knowledge_base(self):
+        try:
+            if os.path.exists(self.knowledge_base_path):
+                with open(self.knowledge_base_path, 'r', encoding='utf-8') as f:
+                    self.knowledge_base = json.load(f)
+                print(f"Loaded {len(self.knowledge_base)} documents")
+        except Exception as e:
+            logging.error(f"Error loading knowledge base: {str(e)}")
+            self.knowledge_base = {}
+
+    def save_knowledge_base(self):
+        try:
+            with open(self.knowledge_base_path, 'w', encoding='utf-8') as f:
+                json.dump(self.knowledge_base, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"Error saving knowledge base: {str(e)}")
+
+    def add_document_to_knowledge_base(self, file_path):
+        try:
+            doc_id = os.path.basename(file_path)
+            doc_info = self.doc_processor.process_document(file_path)
+            
+            self.knowledge_base[doc_id] = {
+                'content': doc_info['content'],
+                'sections': doc_info['sections'],
+                'keywords': doc_info['keywords'],
+                'added_date': datetime.now().isoformat()
+            }
+            
+            self.save_knowledge_base()
+            print(f"Successfully added {doc_id}")
+            
+        except Exception as e:
+            logging.error(f"Error adding document {file_path}: {str(e)}")
+
+    def search_knowledge_base(self, query, max_relevant_chunks=3):
+        try:
+            query_keywords = set(self.doc_processor._extract_keywords(query))
+            relevant_sections = []
+            
+            for doc_id, doc_info in self.knowledge_base.items():
+                for section in doc_info['sections']:
+                    section_keywords = set(self.doc_processor._extract_keywords(section['content']))
+                    relevance_score = len(query_keywords.intersection(section_keywords))
+                    
+                    if relevance_score > 0:
+                        relevant_sections.append({
+                            'doc_id': doc_id,
+                            'content': section['content'],
+                            'score': relevance_score
+                        })
+            
+            relevant_sections.sort(key=lambda x: x['score'], reverse=True)
+            return relevant_sections[:max_relevant_chunks]
+            
+        except Exception as e:
+            logging.error(f"Error searching knowledge base: {str(e)}")
+            return []
+
+    def generate_response(self, query, additional_context=""):
+        try:
+            relevant_docs = self.search_knowledge_base(query)
+            
+            if not relevant_docs:
+                return "No relevant information found in the knowledge base."
+
+            context = "\n\n".join([f"From document {doc['doc_id']}:\n{doc['content']}" 
+                                 for doc in relevant_docs])
+
+            prompt = f"""
+            Query: {query}
+            Additional Context: {additional_context}
+            
+            Relevant Information:
+            {context}
+            
+            Please provide a comprehensive answer based ONLY on the provided information.
+            If certain aspects cannot be answered from the available information, clearly state this.
+            """
+
+            response = self.model.generate_content(prompt)
+            return response.text
+
+        except Exception as e:
+            return f"Error generating response: {str(e)}"
+
+class KnowledgeBaseInterface:
+    def __init__(self, kb_system):
+        self.kb_system = kb_system
+        self.setup_interface()
+
+    def setup_interface(self):
+        self.query_input = widgets.Textarea(
+            placeholder='Enter your question here...',
+            layout={'width': '800px', 'height': '100px'}
+        )
+        
+        self.upload_button = widgets.Button(
+            description='Upload New Document',
+            layout={'width': 'auto'}
+        )
+        
+        self.search_button = widgets.Button(
+            description='Search',
+            layout={'width': 'auto'}
+        )
+        
+        self.status_label = widgets.Label(value="")
+        self.output_area = widgets.Output()
+        
+        self.upload_button.on_click(self.handle_upload)
+        self.search_button.on_click(self.handle_search)
+        
+        display(self.query_input)
+        display(widgets.HBox([self.search_button, self.upload_button]))
+        display(self.status_label)
+        display(self.output_area)
+
+    def handle_upload(self, button):
+        with self.output_area:
+            self.output_area.clear_output()
+            self.status_label.value = "Uploading document..."
+            try:
+                uploaded = files.upload()
+                for filename, content in uploaded.items():
+                    with open(filename, 'wb') as f:
+                        f.write(content)
+                    self.kb_system.add_document_to_knowledge_base(filename)
+                    os.remove(filename)
+                self.status_label.value = "Document(s) added successfully!"
+            except Exception as e:
+                self.status_label.value = f"Error uploading document: {str(e)}"
+
+    def handle_search(self, button):
+        with self.output_area:
+            self.output_area.clear_output()
+            query = self.query_input.value.strip()
+            if query:
+                self.status_label.value = "Searching..."
+                response = self.kb_system.generate_response(query)
+                print("\nQuery:", query)
+                print("\nResponse:")
+                print(response)
+                self.status_label.value = "Response generated!"
+            else:
+                self.status_label.value = "Please enter a query first."
