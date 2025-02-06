@@ -42,8 +42,10 @@ from datetime import datetime
 import nltk
 from nltk.tokenize import sent_tokenize
 from nltk.corpus import stopwords
+from bs4 import BeautifulSoup
 import re
 from docx import Document
+import markdown
 import ipywidgets as widgets
 from IPython.display import display, HTML
 import logging
@@ -58,7 +60,9 @@ class DocumentProcessor:
         self.supported_formats = {
             '.pdf': self._process_pdf,
             '.txt': self._process_text,
-            '.docx': self._process_docx
+            '.docx': self._process_docx,
+            '.md': self._process_markdown,
+            '.html': self._process_html
         }
 
     def process_document(self, file_path):
@@ -89,6 +93,17 @@ class DocumentProcessor:
     def _process_docx(self, file_path):
         doc = Document(file_path)
         return self._clean_text('\n'.join([paragraph.text for paragraph in doc.paragraphs]))
+
+    def _process_markdown(self, file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            md_content = file.read()
+            html_content = markdown.markdown(md_content)
+            return self._clean_text(BeautifulSoup(html_content, 'html.parser').get_text())
+
+    def _process_html(self, file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            soup = BeautifulSoup(file.read(), 'html.parser')
+            return self._clean_text(soup.get_text())
 
     def _clean_text(self, text):
         text = re.sub(r'\s+', ' ', text)
@@ -207,14 +222,41 @@ class KnowledgeBaseSystem:
                                  for doc in relevant_docs])
 
             prompt = f"""
-            Query: {query}
-            Additional Context: {additional_context}
-            
-            Relevant Information:
+            User Query: {query}
+
+            Additional Context (if provided): {additional_context}
+
+            Relevant Information from Knowledge Base:
             {context}
-            
-            Please provide a comprehensive answer based ONLY on the provided information.
-            If certain aspects cannot be answered from the available information, clearly state this.
+
+            Please provide a comprehensive response following these guidelines:
+
+            1. Answer Accuracy:
+               - Use ONLY information from the provided documentation
+               - If information is insufficient, clearly state what cannot be answered
+               - Do not make assumptions or add information not present in the sources
+
+            2. Response Structure:
+               - Start with a direct answer to the query
+               - Provide relevant details and context
+               - Include step-by-step instructions if applicable
+               - List any prerequisites or dependencies mentioned
+
+            3. Source Attribution:
+               - Reference specific documents for key information
+               - Indicate which document contains which part of the answer
+
+            4. Technical Details:
+               - Include any specific technical parameters mentioned
+               - Note any version requirements or compatibility issues
+               - Highlight any warnings or important considerations
+
+            5. Additional Considerations:
+               - Mention any related topics that might be relevant
+               - Note any limitations or edge cases
+               - Suggest related queries if applicable
+
+            Remember: Base your response ONLY on the provided documentation. If certain aspects of the query cannot be answered from the available information, explicitly state this limitation.
             """
 
             response = self.model.generate_content(prompt)
@@ -237,7 +279,7 @@ class KnowledgeBaseInterface:
         )
         
         self.file_upload = widgets.FileUpload(
-            accept='.pdf,.txt,.docx',
+            accept='.pdf,.txt,.docx,.md,.html',  # Updated to include MD and HTML
             multiple=True,
             description='Upload Documents'
         )
