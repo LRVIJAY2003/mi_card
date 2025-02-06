@@ -32,28 +32,28 @@ Mi Card is a personal business card. Imagine every time you wanted to give someo
 
 
 # Install required packages
-!pip install google-cloud-aiplatform PyPDF2 python-docx nltk beautifulsoup4 markdown google-generativeai
+!pip install -q google-cloud-aiplatform PyPDF2 python-docx nltk beautifulsoup4 markdown
 
 import os
-import google.generativeai as genai
 from google.cloud import aiplatform
 import PyPDF2
 import json
 from datetime import datetime
-import io
 import nltk
 from nltk.tokenize import sent_tokenize
 from nltk.corpus import stopwords
-import logging
-from IPython.display import display
+import re
+from docx import Document
 import ipywidgets as widgets
-from google.colab import files
+from IPython.display import display, HTML
+import logging
 
 # Download NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
 
 class DocumentProcessor:
+    """Handles document processing and text extraction"""
     def __init__(self):
         self.supported_formats = {
             '.pdf': self._process_pdf,
@@ -86,8 +86,14 @@ class DocumentProcessor:
         with open(file_path, 'r', encoding='utf-8') as file:
             return self._clean_text(file.read())
 
+    def _process_docx(self, file_path):
+        doc = Document(file_path)
+        return self._clean_text('\n'.join([paragraph.text for paragraph in doc.paragraphs]))
+
     def _clean_text(self, text):
-        return ' '.join(text.split())
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'[^\w\s.,!?-]', '', text)
+        return text.strip()
 
     def _split_into_sections(self, text):
         sentences = sent_tokenize(text)
@@ -115,18 +121,20 @@ class DocumentProcessor:
         return list(set([word for word in words if word not in stop_words and len(word) > 3]))
 
 class KnowledgeBaseSystem:
+    """Manages the knowledge base and handles query processing"""
     def __init__(self, project_id, location):
         self.project_id = project_id
         self.location = location
+        
+        # Initialize Vertex AI
+        aiplatform.init(project=project_id, location=location)
+        
+        # Get the latest model
+        self.model = aiplatform.GenerativeModel.from_pretrained("gemini-pro")
+        
         self.knowledge_base = {}
         self.knowledge_base_path = 'knowledge_base.json'
         self.doc_processor = DocumentProcessor()
-        
-        # Configure Gemini
-        GOOGLE_API_KEY = 'your-api-key'  # Replace with your API key
-        genai.configure(api_key=GOOGLE_API_KEY)
-        self.model = genai.GenerativeModel('gemini-pro')
-        
         self.load_knowledge_base()
 
     def load_knowledge_base(self):
@@ -213,9 +221,11 @@ class KnowledgeBaseSystem:
             return response.text
 
         except Exception as e:
+            logging.error(f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
 class KnowledgeBaseInterface:
+    """Provides the user interface for the knowledge base system"""
     def __init__(self, kb_system):
         self.kb_system = kb_system
         self.setup_interface()
@@ -226,52 +236,45 @@ class KnowledgeBaseInterface:
             layout={'width': '800px', 'height': '100px'}
         )
         
-        self.upload_button = widgets.Button(
-            description='Upload New Document',
-            layout={'width': 'auto'}
+        self.file_upload = widgets.FileUpload(
+            accept='.pdf,.txt,.docx',
+            multiple=True,
+            description='Upload Documents'
         )
         
-        self.search_button = widgets.Button(
-            description='Search',
-            layout={'width': 'auto'}
-        )
-        
-        self.status_label = widgets.Label(value="")
+        self.search_button = widgets.Button(description='Search')
         self.output_area = widgets.Output()
         
-        self.upload_button.on_click(self.handle_upload)
+        self.file_upload.observe(self.handle_upload, names='value')
         self.search_button.on_click(self.handle_search)
         
+        display(HTML("<h2>Knowledge Base Query System</h2>"))
         display(self.query_input)
-        display(widgets.HBox([self.search_button, self.upload_button]))
-        display(self.status_label)
+        display(widgets.HBox([self.search_button, self.file_upload]))
         display(self.output_area)
 
-    def handle_upload(self, button):
+    def handle_upload(self, change):
         with self.output_area:
             self.output_area.clear_output()
-            self.status_label.value = "Uploading document..."
             try:
-                uploaded = files.upload()
-                for filename, content in uploaded.items():
+                for filename, data in change['new'].items():
                     with open(filename, 'wb') as f:
-                        f.write(content)
+                        f.write(data['content'])
                     self.kb_system.add_document_to_knowledge_base(filename)
                     os.remove(filename)
-                self.status_label.value = "Document(s) added successfully!"
+                print("Documents uploaded successfully!")
             except Exception as e:
-                self.status_label.value = f"Error uploading document: {str(e)}"
+                print(f"Error uploading documents: {str(e)}")
 
     def handle_search(self, button):
         with self.output_area:
             self.output_area.clear_output()
             query = self.query_input.value.strip()
             if query:
-                self.status_label.value = "Searching..."
+                print("Searching...")
                 response = self.kb_system.generate_response(query)
                 print("\nQuery:", query)
                 print("\nResponse:")
                 print(response)
-                self.status_label.value = "Response generated!"
             else:
-                self.status_label.value = "Please enter a query first."
+                print("Please enter a query first.")
