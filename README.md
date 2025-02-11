@@ -24,23 +24,31 @@ Mi Card is a personal business card. Imagine every time you wanted to give someo
 
 
 >This is a companion project to The App Brewery's Complete Flutter Development Bootcamp, check out the full course at [www.appbrewery.co](https://www.appbrewery.co/)
+  
 
-![End Banner](https://github.com/londonappbrewery/Images/blob/master/readme-end-banner.png)
-
-
-![End Banner](./mi_card.png)
 import os
-from typing import List, Dict, Any
 import json
+import sys
+import logging
 import datetime
-from IPython.display import display
+from typing import List, Dict, Any
 import ipywidgets as widgets
+from IPython.display import display
 from vertexai.language_models import TextGenerationModel
 import PyPDF2
 import docx
-import nltk
 from bs4 import BeautifulSoup
+import nltk
 import re
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 class DocumentProcessor:
     """Handles processing of different document formats."""
@@ -48,112 +56,170 @@ class DocumentProcessor:
     def __init__(self):
         """Initialize document processor with supported formats."""
         self._supported_formats = {'.txt', '.pdf', '.docx', '.html'}
-        
+        # Download required NLTK data
+        try:
+            nltk.download('punkt', quiet=True)
+            nltk.download('stopwords', quiet=True)
+        except Exception as e:
+            logging.warning(f"NLTK data download failed: {str(e)}")
+    
     def process_document(self, file_path: str) -> Dict[str, Any]:
         """Process document and return structured content."""
-        file_ext = os.path.splitext(file_path)[1].lower()
+        logging.info(f"Processing document: {file_path}")
         
+        file_ext = os.path.splitext(file_path)[1].lower()
         if file_ext not in self._supported_formats:
             raise ValueError(f"Unsupported file format: {file_ext}")
-            
-        content = self._get_content(file_path)
-        sections = self._split_into_sections(content)
         
-        return {
-            'content': content,
-            'sections': sections,
-            'keywords': self._extract_keywords(content)
-        }
+        try:
+            content = self._get_content(file_path)
+            sections = self._split_into_sections(content)
+            keywords = self._extract_keywords(content)
+            
+            return {
+                'content': content,
+                'sections': sections,
+                'keywords': keywords
+            }
+        except Exception as e:
+            logging.error(f"Error processing document {file_path}: {str(e)}")
+            raise
     
     def _get_content(self, file_path: str) -> str:
         """Extract text content based on file type."""
         file_ext = os.path.splitext(file_path)[1].lower()
         
-        if file_ext == '.pdf':
-            return self._process_pdf(file_path)
-        elif file_ext == '.docx':
-            return self._process_docx(file_path)
-        elif file_ext == '.html':
-            return self._process_html(file_path)
-        else:  # .txt
-            return self._process_txt(file_path)
+        try:
+            if file_ext == '.pdf':
+                return self._process_pdf(file_path)
+            elif file_ext == '.docx':
+                return self._process_docx(file_path)
+            elif file_ext == '.html':
+                return self._process_html(file_path)
+            else:  # .txt
+                return self._process_txt(file_path)
+        except Exception as e:
+            logging.error(f"Error extracting content from {file_path}: {str(e)}")
+            raise
     
     def _process_pdf(self, file_path: str) -> str:
         """Extract text from PDF."""
         text = ""
-        with open(file_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
-        return self._clean_text(text)
+        try:
+            with open(file_path, 'rb') as file:
+                reader = PyPDF2.PdfReader(file)
+                for page in reader.pages:
+                    text += page.extract_text() + "\n"
+            return self._clean_text(text)
+        except Exception as e:
+            logging.error(f"Error processing PDF {file_path}: {str(e)}")
+            raise
     
     def _process_docx(self, file_path: str) -> str:
         """Extract text from DOCX."""
-        doc = docx.Document(file_path)
-        return self._clean_text("\n".join([paragraph.text for paragraph in doc.paragraphs]))
+        try:
+            doc = docx.Document(file_path)
+            return self._clean_text("\n".join([paragraph.text for paragraph in doc.paragraphs]))
+        except Exception as e:
+            logging.error(f"Error processing DOCX {file_path}: {str(e)}")
+            raise
     
     def _process_html(self, file_path: str) -> str:
         """Extract text from HTML."""
-        with open(file_path, 'r', encoding='utf-8') as file:
-            soup = BeautifulSoup(file.read(), 'html.parser')
-            return self._clean_text(soup.get_text())
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                soup = BeautifulSoup(file.read(), 'html.parser')
+                return self._clean_text(soup.get_text())
+        except Exception as e:
+            logging.error(f"Error processing HTML {file_path}: {str(e)}")
+            raise
     
     def _process_txt(self, file_path: str) -> str:
         """Read text file."""
-        with open(file_path, 'r', encoding='utf-8') as file:
-            return self._clean_text(file.read())
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return self._clean_text(file.read())
+        except Exception as e:
+            logging.error(f"Error processing TXT {file_path}: {str(e)}")
+            raise
     
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
-        text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces
-        text = text.strip()
-        return text
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text)
+        # Remove special characters
+        text = re.sub(r'[^\w\s.,!?-]', '', text)
+        return text.strip()
     
     def _split_into_sections(self, text: str) -> List[Dict[str, str]]:
         """Split text into manageable sections."""
-        sentences = nltk.sent_tokenize(text)
-        sections = []
-        current_section = []
-        current_length = 0
-        
-        for sentence in sentences:
-            sentence_length = len(sentence)
-            if current_length + sentence_length > 1000:  # Max section size
-                if current_section:
-                    sections.append({
-                        'content': ' '.join(current_section)
-                    })
-                current_section = [sentence]
-                current_length = sentence_length
-            else:
-                current_section.append(sentence)
-                current_length += sentence_length
-        
-        if current_section:
-            sections.append({
-                'content': ' '.join(current_section)
-            })
-        
-        return sections
+        try:
+            sentences = nltk.sent_tokenize(text)
+            sections = []
+            current_section = []
+            current_length = 0
+            max_section_length = 1000
+            
+            for sentence in sentences:
+                sentence_length = len(sentence)
+                if current_length + sentence_length > max_section_length:
+                    if current_section:
+                        sections.append({
+                            'content': ' '.join(current_section)
+                        })
+                    current_section = [sentence]
+                    current_length = sentence_length
+                else:
+                    current_section.append(sentence)
+                    current_length += sentence_length
+            
+            if current_section:
+                sections.append({
+                    'content': ' '.join(current_section)
+                })
+            
+            return sections
+        except Exception as e:
+            logging.error(f"Error splitting text into sections: {str(e)}")
+            raise
     
     def _extract_keywords(self, text: str) -> List[str]:
         """Extract key terms from text."""
-        words = text.lower().split()
-        stop_words = set(nltk.corpus.stopwords.words('english'))
-        return [word for word in words if word not in stop_words and len(word) > 3]
+        try:
+            words = text.lower().split()
+            stop_words = set(nltk.corpus.stopwords.words('english'))
+            keywords = [word for word in words if word not in stop_words and len(word) > 3]
+            return list(set(keywords))  # Remove duplicates
+        except Exception as e:
+            logging.error(f"Error extracting keywords: {str(e)}")
+            raise
 
 class KnowledgeBaseSystem:
     """Manages the knowledge base and handles queries."""
     
-    def __init__(self, project_id: str = 'cloud-workspace-poc-51731', location: str = 'us-central1'):
+    def __init__(self, project_id: str = 'cloud-workspace-poc-51731', 
+                 location: str = 'us-central1',
+                 docs_folder: str = 'knowledge_base_docs'):
         """Initialize the knowledge base system."""
         self.project_id = project_id
         self.location = location
-        self.model = TextGenerationModel('gemini-1.0-pro-001')
-        self.knowledge_base = {}
+        self.docs_folder = docs_folder
         self.knowledge_base_path = 'knowledge_base.json'
+        
+        # Initialize components
+        self.model = TextGenerationModel('gemini-1.0-pro-001')
         self.doc_processor = DocumentProcessor()
+        self.knowledge_base = {}
+        
+        # Create necessary folders
+        if not os.path.exists(docs_folder):
+            os.makedirs(docs_folder)
+        
+        # Load existing knowledge base
         self.load_knowledge_base()
+        
+        # Process existing documents
+        self._process_existing_documents()
     
     def load_knowledge_base(self):
         """Load existing knowledge base from file."""
@@ -161,9 +227,9 @@ class KnowledgeBaseSystem:
             if os.path.exists(self.knowledge_base_path):
                 with open(self.knowledge_base_path, 'r', encoding='utf-8') as f:
                     self.knowledge_base = json.load(f)
-                print(f"Loaded {len(self.knowledge_base)} documents")
+                logging.info(f"Loaded {len(self.knowledge_base)} documents from knowledge base")
         except Exception as e:
-            print(f"Error loading knowledge base: {str(e)}")
+            logging.error(f"Error loading knowledge base: {str(e)}")
             self.knowledge_base = {}
     
     def save_knowledge_base(self):
@@ -171,8 +237,19 @@ class KnowledgeBaseSystem:
         try:
             with open(self.knowledge_base_path, 'w', encoding='utf-8') as f:
                 json.dump(self.knowledge_base, f, ensure_ascii=False, indent=2)
+            logging.info("Knowledge base saved successfully")
         except Exception as e:
-            print(f"Error saving knowledge base: {str(e)}")
+            logging.error(f"Error saving knowledge base: {str(e)}")
+    
+    def _process_existing_documents(self):
+        """Process all documents in the docs folder."""
+        try:
+            for filename in os.listdir(self.docs_folder):
+                file_path = os.path.join(self.docs_folder, filename)
+                if os.path.isfile(file_path):
+                    self.add_document_to_knowledge_base(file_path)
+        except Exception as e:
+            logging.error(f"Error processing existing documents: {str(e)}")
     
     def add_document_to_knowledge_base(self, file_path: str):
         """Process and add document to knowledge base."""
@@ -189,14 +266,16 @@ class KnowledgeBaseSystem:
             }
             
             self.save_knowledge_base()
-            print(f"Successfully added {doc_id}")
+            logging.info(f"Successfully added {doc_id}")
             
         except Exception as e:
-            print(f"Error adding document {file_path}: {str(e)}")
+            logging.error(f"Error adding document {file_path}: {str(e)}")
+            raise
     
     def search_knowledge_base(self, query: str, max_relevant_chunks: int = 5) -> List[Dict[str, Any]]:
         """Search knowledge base for relevant sections."""
         try:
+            logging.info(f"Searching for query: {query}")
             query_keywords = set(self.doc_processor._extract_keywords(query))
             relevant_sections = []
             
@@ -213,10 +292,11 @@ class KnowledgeBaseSystem:
                         })
             
             relevant_sections.sort(key=lambda x: x['score'], reverse=True)
+            logging.info(f"Found {len(relevant_sections)} relevant sections")
             return relevant_sections[:max_relevant_chunks]
             
         except Exception as e:
-            print(f"Error searching knowledge base: {str(e)}")
+            logging.error(f"Error searching knowledge base: {str(e)}")
             return []
     
     def generate_response(self, query: str, additional_context: str = "") -> str:
@@ -271,6 +351,7 @@ Remember: Base your response ONLY on the provided documentation. If certain aspe
             return response.text
             
         except Exception as e:
+            logging.error(f"Error generating response: {str(e)}")
             return f"Error generating response: {str(e)}"
 
 class KnowledgeBaseInterface:
@@ -283,46 +364,59 @@ class KnowledgeBaseInterface:
     
     def setup_interface(self):
         """Set up the UI components."""
-        # File upload widget
-        self.file_upload = widgets.FileUpload(
-            accept='.pdf,.txt,.docx,.html',
-            multiple=True,
-            description='Upload Documents'
-        )
-        
-        # Query input
-        self.query_input = widgets.Text(
-            value='',
-            placeholder='Enter your query here...',
-            description='Query:',
-            layout={'width': '800px', 'height': '100px'}
-        )
-        
-        # Output area
-        self.output_area = widgets.Output()
-        
-        # Search button
-        self.search_button = widgets.Button(description='Search')
-        
-        # Set up event handlers
-        self.file_upload.observe(self.handle_upload, names='value')
-        self.search_button.on_click(self.handle_search)
-        
-        # Display UI components
-        display(widgets.VBox([
-            widgets.HTML("<h2>Knowledge Base Query System</h2>"),
-            self.file_upload,
-            self.query_input,
-            self.search_button,
-            self.output_area
-        ]))
+        try:
+            # File upload widget
+            self.file_upload = widgets.FileUpload(
+                accept='.pdf,.txt,.docx,.html',
+                multiple=True,
+                description='Upload Documents',
+                layout={'width': 'auto'}
+            )
+            
+            # Query input
+            self.query_input = widgets.Text(
+                value='',
+                placeholder='Enter your query here...',
+                description='Query:',
+                layout={'width': '800px'}
+            )
+            
+            # Output area
+            self.output_area = widgets.Output()
+            
+            # Search button
+            self.search_button = widgets.Button(
+                description='Search',
+                button_style='primary'
+            )
+            
+            # Set up event handlers
+            self.file_upload.observe(self.handle_upload, names='value')
+            self.search_button.on_click(self.handle_search)
+            
+            # Display UI components
+            display(widgets.VBox([
+                widgets.HTML("<h2>Knowledge Base Query System</h2>"),
+                self.file_upload,
+                self.query_input,
+                self.search_button,
+                self.output_area
+            ]))
+            
+        except Exception as e:
+            logging.error(f"Error setting up interface: {str(e)}")
+            raise
     
     def handle_upload(self, change):
         """Handle file upload events."""
         with self.output_area:
             self.output_area.clear_output()
             try:
-                for filename, file_info in change['new'].items():
+                uploaded_files = change['new']
+                if not uploaded_files:
+                    return
+                
+                for filename, file_info in uploaded_files.items():
                     content = file_info['content']
                     
                     # Save uploaded file temporarily
@@ -331,34 +425,11 @@ class KnowledgeBaseInterface:
                         f.write(content)
                     
                     # Process and add to knowledge base
-                    self.kb_system.add_document_to_knowledge_base(temp_path)
-                    
-                    # Clean up temporary file
-                    os.remove(temp_path)
-                    
-                print("Documents uploaded successfully!")
-                    
-            except Exception as e:
-                print(f"Error uploading documents: {str(e)}")
-    
-    def handle_search(self, button):
-        """Handle search button clicks."""
-        with self.output_area:
-            self.output_area.clear_output()
-            query = self.query_input.value.strip()
-            
-            if query:
-                try:
-                    response = self.kb_system.generate_response(query)
-                    print("Query:", query)
-                    print("\nResponse:")
-                    print(response)
-                except Exception as e:
-                    print(f"Error searching: {str(e)}")
-            else:
-                print("Please enter a query first.")
-
-# Usage
-if __name__ == "__main__":
-    kb_system = KnowledgeBaseSystem()
-    interface = KnowledgeBaseInterface(kb_system)
+                    try:
+                        self.kb_system.add_document_to_knowledge_base(temp_path)
+                        print(f"Successfully processed: {filename}")
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+       
